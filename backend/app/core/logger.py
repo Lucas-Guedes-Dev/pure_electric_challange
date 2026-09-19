@@ -71,6 +71,7 @@ def setup_logging() -> None:
         service_name=settings.service_name,
         service_version=settings.app_version,
         environment=settings.environment,
+        api_key=settings.elasticsearch_api_key,
     )
     elastic.addFilter(context_filter)
     elastic.addFilter(SkipAlreadyLoggedFilter())

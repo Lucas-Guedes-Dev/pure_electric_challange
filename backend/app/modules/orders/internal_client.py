@@ -25,7 +25,8 @@ class OrderDispatch:
     external_id: str
     customer: str
     amount: Decimal
-    attempt: int
+    attempt: int  # número do envio no histórico (total, contando reprocessamentos)
+    cycle: int = 1  # rodada de processamento (1 = original)
 
 
 @dataclass(frozen=True)

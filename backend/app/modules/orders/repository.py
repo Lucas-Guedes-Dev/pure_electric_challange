@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from app.modules.orders.model import Order, OrderAttempt, OrderStatus
+from app.modules.orders.model import Order, OrderAttempt, OrderReprocess, OrderStatus
 from app.shared.repository import BaseRepository
 
 
@@ -18,7 +18,21 @@ class OrderRepository(BaseRepository[Order]):
         stmt = (
             select(Order)
             .where(Order.id == order_id)
-            .options(selectinload(Order.processing_attempts))
+            .options(
+                selectinload(Order.processing_attempts),
+                selectinload(Order.reprocesses).selectinload(OrderReprocess.requested_by),
+            )
+        )
+        return self.db.scalars(stmt).first()
+
+    def get_for_update(self, order_id: int) -> Order | None:
+        """Pedido travado (FOR UPDATE) até o fim da transação: duas ações simultâneas
+        sobre o mesmo pedido acontecem uma depois da outra, vendo o estado já atualizado."""
+        stmt = (
+            select(Order)
+            .where(Order.id == order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return self.db.scalars(stmt).first()
 
@@ -49,6 +63,18 @@ class OrderRepository(BaseRepository[Order]):
         )
         for attempt in self.db.scalars(stmt):
             result[attempt.order_id].append(attempt)
+        return result
+
+    def reprocesses_by_order_ids(self, order_ids: list[int]) -> dict[int, list[OrderReprocess]]:
+        result: dict[int, list[OrderReprocess]] = {order_id: [] for order_id in order_ids}
+        stmt = (
+            select(OrderReprocess)
+            .where(OrderReprocess.order_id.in_(order_ids))
+            .options(selectinload(OrderReprocess.requested_by))
+            .order_by(OrderReprocess.order_id, OrderReprocess.number)
+        )
+        for reprocess in self.db.scalars(stmt):
+            result[reprocess.order_id].append(reprocess)
         return result
 
     def count_by_status(self) -> dict[OrderStatus, int]:

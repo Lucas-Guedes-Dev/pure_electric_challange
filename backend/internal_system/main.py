@@ -10,6 +10,8 @@ Cenários (pelo prefixo do externalId, sem diferenciar maiúsculas):
     FAIL-...     recusa definitiva (HTTP 422)                       -> pedido FAILED na 1ª tentativa
     FLAKY-...    indisponível (HTTP 503) nas 2 primeiras chamadas   -> PROCESSED na 3ª tentativa
     TIMEOUT-...  demora mais que o timeout do worker                -> retentativas e FAILED no fim
+    OUTAGE-...   indisponível (HTTP 503) nas 3 primeiras chamadas   -> FAILED (tentativas esgotadas);
+                 volta a responder depois                              reprocessado -> PROCESSED
     valor acima de INTERNAL_SYSTEM_MAX_AMOUNT: recusa definitiva (HTTP 422)
     demais:      sucesso, com falha intermitente aleatória (HTTP 503) em
                  INTERNAL_SYSTEM_FAILURE_RATE das chamadas (padrão 0 = nunca)
@@ -35,6 +37,8 @@ MAX_LATENCY_MS = int(os.getenv("INTERNAL_SYSTEM_MAX_LATENCY_MS", "600"))
 TIMEOUT_SCENARIO_SECONDS = float(os.getenv("INTERNAL_SYSTEM_TIMEOUT_SCENARIO_SECONDS", "30"))
 MAX_AMOUNT = Decimal(os.getenv("INTERNAL_SYSTEM_MAX_AMOUNT", "100000"))
 FLAKY_FAILURES = 2
+# Igual ao ORDER_MAX_ATTEMPTS padrão: a queda dura a rodada inteira de tentativas
+OUTAGE_FAILURES = int(os.getenv("INTERNAL_SYSTEM_OUTAGE_FAILURES", "3"))
 
 app = FastAPI(
     title="Sistema interno (mock)",
@@ -84,6 +88,8 @@ async def process_order(
         return error(504, "Processamento demorou demais")
     if scenario.startswith("FLAKY") and calls[key] <= FLAKY_FAILURES:
         return error(503, f"Sistema interno temporariamente indisponível (chamada {calls[key]})")
+    if scenario.startswith("OUTAGE") and calls[key] <= OUTAGE_FAILURES:
+        return error(503, f"Sistema interno fora do ar (chamada {calls[key]} de {OUTAGE_FAILURES} com falha)")
     if random.random() < FAILURE_RATE:
         return error(503, "Falha intermitente simulada")
 

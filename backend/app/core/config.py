@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     postgres_db: str = "pure_eletric"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    # URL completa do banco (ex.: a DATABASE_URL do Postgres do Railway). Se definida,
+    # tem prioridade sobre as variáveis POSTGRES_*
+    database_url_env: str | None = Field(default=None, validation_alias="DATABASE_URL")
 
     # Lista separada por vírgula, ex.: "http://localhost:5173,http://127.0.0.1:5173"
     cors_origins: str = "http://localhost:5173"
@@ -37,6 +40,10 @@ class Settings(BaseSettings):
     # true em produção (HTTPS). Em dev (http://localhost) precisa ser false
     session_cookie_secure: bool = False
     session_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    # Assina os tickets de conexão do WebSocket (/api/auth/ws-ticket). Vazio = segredo
+    # aleatório por processo (ok com 1 réplica da API; com várias, defina o mesmo em todas)
+    secret_key: str | None = None
+    ws_ticket_ttl_seconds: int = 60
 
     # --- Logs ---
     log_level: str = "INFO"
@@ -45,6 +52,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     # Para onde os logs são enviados, ex.: "http://elasticsearch:9200". Vazio = só console
     elasticsearch_url: str | None = None
+    # Chave de API do Elasticsearch (Elastic Cloud). Vazio = sem autenticação (ES local do compose)
+    elasticsearch_api_key: str | None = None
     # Data stream no padrão logs-<dataset>-<namespace> (usa o template de logs nativo do ES)
     elasticsearch_logs_data_stream: str = "logs-pure_eletric.api-default"
 
@@ -86,6 +95,12 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
+        if self.database_url_env:
+            # O Railway (e o Heroku) usam postgres:// ou postgresql://; o SQLAlchemy precisa do driver
+            scheme, _, rest = self.database_url_env.partition("://")
+            if scheme in ("postgres", "postgresql"):
+                return f"postgresql+psycopg://{rest}"
+            return self.database_url_env
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

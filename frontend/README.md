@@ -55,7 +55,7 @@ frontend/
 │   │   ├── authService.ts    # login, logout, me, refresh, events (EventSource)
 │   │   └── healthService.ts
 │   ├── hooks/                # estado + chamadas à API para as telas
-│   │   ├── useOrders.ts      # lista ao vivo, totais, detalhe, simulador
+│   │   ├── useOrders.ts      # lista ao vivo, totais, detalhe, simulador, reprocessamento
 │   │   ├── useOrderFilters.ts  # filtros da lista guardados na URL
 │   │   ├── useCountdown.ts   # "próxima tentativa em 0:08"
 │   │   └── useNow.ts         # relógio para textos relativos
@@ -68,7 +68,7 @@ frontend/
 │   │   ├── session-expiring-dialog/ # aviso "sua sessão vai expirar" + continuar conectado
 │   │   ├── session-loading/  # "Verificando sessão…" enquanto o /me responde
 │   │   ├── orders/           # StatusBadge, StatsCards, OrdersTable, StatusTimeline,
-│   │   │                     # AttemptsTable, SimulatorPanel, LiveIndicator
+│   │   │                     # AttemptsTable, ReprocessPanel, SimulatorPanel, LiveIndicator
 │   │   └── HealthBadge.tsx   # componentes de domínio (usam os de ui/)
 │   └── pages/                # telas (compõem hooks + components)
 │       ├── LoginPage.tsx     # /login
@@ -243,10 +243,14 @@ As telas de pedidos usam o **GraphQL** do backend (`/api/graphql`). O login cont
 
 ### Simulador
 
-O botão **Simular pedidos** faz o papel do sistema externo. Ele envia pedidos pelo mesmo fluxo do webhook, usando a mutation `simulateOrders`, e dá para escolher como o sistema interno simulado vai responder: sucesso, instável, recusado, sem resposta ou aleatório.
+O botão **Simular pedidos** faz o papel do sistema externo. Ele envia pedidos pelo mesmo fluxo do webhook, usando a mutation `simulateOrders`, e dá para escolher como o sistema interno simulado vai responder: sucesso, instável, recusado, sem resposta, fora do ar (termina `FAILED` e dá certo ao reprocessar) ou aleatório.
 - **Onde fica a lógica:** o simulador roda **no backend**. A chave do webhook nunca vai para o navegador; a tela só precisa estar logada.
 - **Quando aparece:** só com `ORDER_SIMULATOR_ENABLED=true` no backend. No compose de desenvolvimento ela já vem ligada.
 - **Reenviar pedido** (na tela de detalhe): reenvia o mesmo pedido e mostra que nada novo foi criado nem processado de novo.
+
+### Reprocessamento
+
+No detalhe de um pedido `FAILED`, administradores veem o botão **Reprocessar pedido** (mutation `reprocessOrder`). Ele pede confirmação, aceita um motivo opcional e devolve o pedido à fila; o andamento aparece ao vivo pela subscription. O histórico de tentativas passa a mostrar as rodadas separadas, com quem reprocessou, quando e o motivo. O botão é só conveniência: o backend confere se o usuário é administrador e se o pedido está em `FAILED`.
 
 ### Tipos garantidos pelo schema
 

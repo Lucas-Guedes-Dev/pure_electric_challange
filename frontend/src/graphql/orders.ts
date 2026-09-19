@@ -12,6 +12,7 @@ export const ORDER_SUMMARY_FRAGMENT = graphql(`
     amount
     status
     attempts
+    cycle
     nextAttemptAt
     lastError
     internalReference
@@ -25,11 +26,25 @@ export const ORDER_HISTORY_FRAGMENT = graphql(`
   fragment OrderHistory on Order {
     history {
       number
+      cycle
       startedAt
       finishedAt
       durationMs
       outcome
       message
+    }
+  }
+`)
+
+export const ORDER_REPROCESSES_FRAGMENT = graphql(`
+  fragment OrderReprocesses on Order {
+    reprocesses {
+      number
+      cycle
+      requestedBy
+      reason
+      previousError
+      createdAt
     }
   }
 `)
@@ -64,6 +79,7 @@ export const ORDER_DETAIL_QUERY = graphql(`
     order(id: $id) {
       ...OrderSummary
       ...OrderHistory
+      ...OrderReprocesses
     }
   }
 `)
@@ -77,12 +93,13 @@ export const ORDERS_UPDATED_SUBSCRIPTION = graphql(`
   }
 `)
 
-/** Um pedido (detalhe): com histórico, para a tabela de tentativas atualizar ao vivo */
+/** Um pedido (detalhe): com histórico e reprocessamentos, para a tabela de tentativas atualizar ao vivo */
 export const ORDER_UPDATED_SUBSCRIPTION = graphql(`
   subscription OrderUpdated($id: ID!) {
     orderUpdated(id: $id) {
       ...OrderSummary
       ...OrderHistory
+      ...OrderReprocesses
     }
   }
 `)
@@ -111,6 +128,18 @@ export const RESEND_ORDER_MUTATION = graphql(`
       order {
         ...OrderSummary
       }
+    }
+  }
+`)
+
+/** Devolve um pedido FAILED à fila (só administrador). Traz o histórico e os
+ * reprocessamentos para o detalhe atualizar na hora, antes do primeiro evento. */
+export const REPROCESS_ORDER_MUTATION = graphql(`
+  mutation ReprocessOrder($id: ID!, $reason: String) {
+    reprocessOrder(id: $id, reason: $reason) {
+      ...OrderSummary
+      ...OrderHistory
+      ...OrderReprocesses
     }
   }
 `)

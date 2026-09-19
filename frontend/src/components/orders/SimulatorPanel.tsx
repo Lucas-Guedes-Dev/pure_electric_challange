@@ -10,6 +10,11 @@ const SCENARIOS: { value: SimulationScenario; title: string; expected: string }[
   { value: 'UNSTABLE', title: 'Instável', expected: '2 falhas temporárias e processado na 3ª tentativa' },
   { value: 'REJECTED', title: 'Recusado', expected: 'O sistema interno recusa: falha sem nova tentativa' },
   { value: 'TIMEOUT', title: 'Sem resposta', expected: 'Timeout nas 3 tentativas (~30 s) e depois falha' },
+  {
+    value: 'OUTAGE',
+    title: 'Fora do ar',
+    expected: 'Indisponível nas 3 tentativas e falha; ao reprocessar, é processado',
+  },
   { value: 'RANDOM', title: 'Aleatório', expected: 'Mistura dos cenários acima' },
 ]
 

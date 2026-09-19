@@ -30,6 +30,7 @@ class SimulationScenario(str, enum.Enum):
     REJECTED = "REJECTED"  # recusado (422) -> FAILED sem retentativa
     UNSTABLE = "UNSTABLE"  # 503 nas 2 primeiras chamadas -> PROCESSED na 3ª tentativa
     TIMEOUT = "TIMEOUT"  # não responde a tempo -> retentativas e FAILED
+    OUTAGE = "OUTAGE"  # fora do ar nas 3 primeiras chamadas -> FAILED; reprocessado -> PROCESSED
     RANDOM = "RANDOM"  # mistura dos cenários acima
 
 
@@ -38,6 +39,7 @@ PREFIXES = {
     SimulationScenario.REJECTED: "FAIL",
     SimulationScenario.UNSTABLE: "FLAKY",
     SimulationScenario.TIMEOUT: "TIMEOUT",
+    SimulationScenario.OUTAGE: "OUTAGE",
 }
 
 CUSTOMERS = [

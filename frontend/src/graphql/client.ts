@@ -5,23 +5,50 @@
  *   atualizado, a linha da lista e a tela de detalhe mudam sozinhas.
  * - As subscriptions vão por WebSocket (graphql-ws), que reconecta sozinho com espera
  *   crescente. Recusa 4403 = sem sessão: não reconecta e confere a sessão com o backend.
+ * - A conexão se autentica com um ticket de curta duração (POST /api/auth/ws-ticket), e não
+ *   com o cookie: no Vercel o cookie fica no domínio do frontend e o WebSocket vai direto à
+ *   API no Railway (VITE_GRAPHQL_WS_URL), onde o navegador não mandaria esse cookie.
  * - Erro SESSION_EXPIRED / NOT_AUTHENTICATED em qualquer operação desloga (igual ao REST).
  */
 import { cacheExchange } from '@urql/exchange-graphcache'
 import { createClient as createWsClient, type Client as WsClient } from 'graphql-ws'
 import { Client, fetchExchange, mapExchange, subscriptionExchange } from 'urql'
-import { apiUrl } from '../api/httpClient'
+import { ApiError, apiUrl } from '../api/httpClient'
+import { authService } from '../services/authService'
 import { clearSession, getSession, loadSession } from '../utils/session'
 import { setLiveStatus } from './liveStatus'
 
 const SESSION_ERROR_CODES = new Set(['SESSION_EXPIRED', 'NOT_AUTHENTICATED'])
 const WS_UNAUTHORIZED = 4403
 
-/** URL do WebSocket a partir da URL da API (relativa, como "/api", ou absoluta). */
-export function graphqlWsUrl(httpUrl: string = apiUrl('/graphql'), location: Location = window.location): string {
+/** URL do WebSocket: VITE_GRAPHQL_WS_URL ou derivada da URL da API (relativa, como "/api", ou absoluta). */
+export function graphqlWsUrl(
+  httpUrl: string = apiUrl('/graphql'),
+  location: Location = window.location,
+  explicit: string | undefined = import.meta.env.VITE_GRAPHQL_WS_URL,
+): string {
+  if (explicit) return explicit
   const absolute = new URL(httpUrl, location.href)
   absolute.protocol = absolute.protocol === 'https:' ? 'wss:' : 'ws:'
   return absolute.toString()
+}
+
+const TICKET_ATTEMPTS = 3
+
+/**
+ * Ticket para o connection_init. Um erro aqui encerra o WebSocket sem nova tentativa
+ * (regra do graphql-ws), então falhas passageiras de rede são repetidas aqui mesmo.
+ * 401 (sem sessão) não: o httpClient já avisou o app, que vai para o login.
+ */
+async function fetchWsTicket(): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return (await authService.wsTicket()).ticket
+    } catch (error) {
+      if (attempt >= TICKET_ATTEMPTS || (error instanceof ApiError && error.status === 401)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
+    }
+  }
 }
 
 function createWs(): WsClient {
@@ -29,6 +56,8 @@ function createWs(): WsClient {
   return createWsClient({
     url: graphqlWsUrl(),
     lazy: true, // só conecta quando alguma tela assina um evento
+    // Pedido a cada (re)conexão: o ticket vale poucos segundos
+    connectionParams: async () => ({ ticket: await fetchWsTicket() }),
     retryAttempts: Infinity,
     shouldRetry: (event) => !(event instanceof CloseEvent && event.code === WS_UNAUTHORIZED),
     retryWait: async (retries) => {
@@ -79,6 +108,7 @@ export function createGraphQLClient(): AppGraphQLClient {
           OrderPage: () => null,
           OrderStats: () => null,
           OrderAttempt: () => null,
+          OrderReprocess: () => null,
           ReceiveOrderPayload: () => null,
         },
       }),

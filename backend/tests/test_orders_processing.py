@@ -236,6 +236,7 @@ def test_worker_dying_on_last_attempt_fails_the_order(db: Session, receive) -> N
     order = reload(db, order_id)
     order.status = OrderStatus.PROCESSING
     order.attempts = settings.order_max_attempts
+    order.cycle_attempts = settings.order_max_attempts
     order.locked_until = utcnow() - timedelta(seconds=1)
     db.commit()
     worker, fake = processor()
@@ -260,6 +261,8 @@ def test_worker_dying_on_last_attempt_fails_the_order(db: Session, receive) -> N
         (OrderStatus.PROCESSED, OrderStatus.FAILED),
         (OrderStatus.FAILED, OrderStatus.PROCESSING),
         (OrderStatus.FAILED, OrderStatus.PROCESSED),
+        (OrderStatus.PROCESSED, OrderStatus.RECEIVED),
+        (OrderStatus.PROCESSING, OrderStatus.RECEIVED),
     ],
 )
 def test_invalid_transitions_are_rejected(current: OrderStatus, target: OrderStatus) -> None:
@@ -275,6 +278,7 @@ def test_invalid_transitions_are_rejected(current: OrderStatus, target: OrderSta
         (OrderStatus.PROCESSING, OrderStatus.PROCESSED),
         (OrderStatus.PROCESSING, OrderStatus.FAILED),
         (OrderStatus.PROCESSING, OrderStatus.PROCESSING),
+        (OrderStatus.FAILED, OrderStatus.RECEIVED),  # reprocessamento
     ],
 )
 def test_valid_transitions(current: OrderStatus, target: OrderStatus) -> None:

@@ -1,14 +1,15 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.security import APIKeyHeader
 
 from app.core.config import settings
-from app.modules.auth.dependencies import CurrentUser
+from app.modules.auth.dependencies import CurrentAdmin, CurrentUser
 from app.modules.orders.dtos import (
     OrderCreateDTO,
     OrderDetailDTO,
     OrderListParamsDTO,
+    OrderReprocessRequestDTO,
     OrderResponseDTO,
     OrderStatsDTO,
 )
@@ -111,3 +112,38 @@ def order_stats(_: CurrentUser, service: OrderServiceDep) -> OrderStatsDTO:
 )
 def get_order(order_id: int, _: CurrentUser, service: OrderServiceDep) -> OrderDetailDTO:
     return service.get(order_id)
+
+
+@router.post(
+    "/{order_id}/reprocess",
+    response_model=OrderResponseDTO,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Reprocessar pedido com falha",
+    description=(
+        "Devolve à fila um pedido em `FAILED`, com uma rodada nova de tentativas "
+        "(`FAILED → RECEIVED`); o worker processa de novo com as mesmas regras de retry e "
+        "backoff. O histórico das tentativas anteriores é mantido e o reprocessamento fica "
+        "registrado (quem pediu, quando, motivo e o erro anterior).\n\n"
+        "Só `FAILED`: pedidos `PROCESSED` já foram aceitos pelo sistema interno e pedidos "
+        "`RECEIVED`/`PROCESSING` já estão na fila (`409`). Pedidos simultâneos para o mesmo "
+        "pedido geram um único reprocessamento.\n\n"
+        "Exige login de administrador."
+    ),
+    responses={
+        status.HTTP_202_ACCEPTED: {"description": "Pedido de volta na fila; será processado de forma assíncrona"},
+        **UNAUTHENTICATED,
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponseDTO, "description": "Usuário não é administrador"},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponseDTO, "description": "Pedido não encontrado"},
+        status.HTTP_409_CONFLICT: {
+            "model": ErrorResponseDTO,
+            "description": "`ORDER_NOT_REPROCESSABLE`: o pedido não está em FAILED",
+        },
+    },
+)
+def reprocess_order(
+    order_id: int,
+    admin: CurrentAdmin,
+    service: OrderServiceDep,
+    payload: Annotated[OrderReprocessRequestDTO | None, Body()] = None,
+) -> OrderResponseDTO:
+    return service.reprocess(order_id, admin, payload or OrderReprocessRequestDTO())

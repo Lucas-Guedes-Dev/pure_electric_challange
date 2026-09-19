@@ -32,6 +32,11 @@ class SessionInfoDTO(BaseDTO):
     )
 
 
+class WsTicketResponseDTO(BaseDTO):
+    ticket: str = Field(description="Enviar no connection_init do WebSocket: `{ \"ticket\": \"...\" }`")
+    expires_in_seconds: int = Field(description="Validade do ticket (só para abrir a conexão)", examples=[60])
+
+
 class AuthSessionResponseDTO(BaseDTO):
     """Resposta de login, /me e /refresh: quem está logado e até quando."""
 

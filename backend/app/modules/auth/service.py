@@ -111,7 +111,13 @@ class AuthService:
         expiração por inatividade para frente (é o que acontece em todo request autenticado)."""
         if not token:
             raise NotAuthenticatedException()
-        session = self.sessions.get_by_token_hash(hash_session_token(token))
+        return self._validate(self.sessions.get_by_token_hash(hash_session_token(token)), touch=touch)
+
+    def authenticate_session_id(self, session_id: int, *, touch: bool) -> tuple[User, UserSession]:
+        """Como `authenticate`, mas pela sessão do ticket de conexão do WebSocket."""
+        return self._validate(self.sessions.get_by_id(session_id), touch=touch)
+
+    def _validate(self, session: UserSession | None, *, touch: bool) -> tuple[User, UserSession]:
         if session is None:
             raise NotAuthenticatedException()
 

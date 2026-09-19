@@ -7,9 +7,10 @@ from app.core.database import SessionFactory
 from app.core.rate_limit import limiter
 from app.modules.auth.cookies import delete_session_cookie, set_session_cookie
 from app.modules.auth.dependencies import CurrentAuth, SessionToken
-from app.modules.auth.dtos import AuthSessionResponseDTO, LoginRequestDTO
+from app.modules.auth.dtos import AuthSessionResponseDTO, LoginRequestDTO, WsTicketResponseDTO
 from app.modules.auth.events import read_session_state, session_event_stream
 from app.modules.auth.service import AuthServiceDep
+from app.modules.auth.ws_ticket import issue_ticket
 from app.shared.dtos import ErrorResponseDTO
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -105,6 +106,22 @@ def me(auth: CurrentAuth, service: AuthServiceDep) -> AuthSessionResponseDTO:
 )
 def refresh(auth: CurrentAuth, service: AuthServiceDep) -> AuthSessionResponseDTO:
     return service.build_response(auth.user, auth.session)
+
+
+@router.post(
+    "/ws-ticket",
+    response_model=WsTicketResponseDTO,
+    summary="Ticket do WebSocket",
+    description=(
+        "Ticket de curta duração para abrir o WebSocket do GraphQL (`/api/graphql`) quando ele "
+        "está em outro domínio que o cookie de sessão (ex.: frontend no Vercel com a API no "
+        "Railway). Envie no `connection_init`: `{\"ticket\": \"...\"}`. Não renova a sessão."
+    ),
+    responses=UNAUTHORIZED,
+)
+def ws_ticket(service: AuthServiceDep, token: SessionToken) -> WsTicketResponseDTO:
+    _, session = service.authenticate(token, touch=False)
+    return WsTicketResponseDTO(ticket=issue_ticket(session.id), expires_in_seconds=settings.ws_ticket_ttl_seconds)
 
 
 @router.get(

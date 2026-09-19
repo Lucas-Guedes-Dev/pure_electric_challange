@@ -311,7 +311,8 @@ Para esconder a documentação (ex.: em produção), use `DOCS_ENABLED=false`.
 | POST   | `/api/orders`       | `OrderCreateDTO`  | `OrderResponseDTO` (202 novo / 200 reenvio) | header `X-Webhook-Key` |
 | GET    | `/api/orders`       | `?status=&search=&page=&size=` | `PageDTO[OrderResponseDTO]` | sim |
 | GET    | `/api/orders/stats` | —                 | `OrderStatsDTO`             | sim |
-| GET    | `/api/orders/{id}`  | —                 | `OrderDetailDTO` (com histórico) | sim |
+| GET    | `/api/orders/{id}`  | —                 | `OrderDetailDTO` (com histórico e reprocessamentos) | sim |
+| POST   | `/api/orders/{id}/reprocess` | `OrderReprocessRequestDTO` (motivo opcional) | `OrderResponseDTO` (202) | administrador |
 | POST   | `/api/graphql`      | query / mutation GraphQL | JSON GraphQL        | por operação (ver [GraphQL](#graphql)) |
 | WS     | `/api/graphql`      | subscription (`graphql-transport-ws`) | eventos      | sim |
 
@@ -333,12 +334,32 @@ Três processos separados, cada um com seu container: `backend` (API), `worker` 
 
 ```
 RECEIVED ──► PROCESSING ──► PROCESSED
-                 │ ▲
-                 │ └── falha temporária: nova tentativa com backoff (continua PROCESSING)
-                 └──► FAILED   (recusa definitiva ou tentativas esgotadas)
+   ▲             │ ▲
+   │             │ └── falha temporária: nova tentativa com backoff (continua PROCESSING)
+   │             └──► FAILED   (recusa definitiva ou tentativas esgotadas)
+   │                    │
+   └── reprocessamento ─┘   (manual, administrador)
 ```
 
-As transições ficam em `ALLOWED_TRANSITIONS` (`orders/model.py`), e `Order.transition_to()` rejeita qualquer outra (ex.: `PROCESSED → PROCESSING`). `PROCESSED` e `FAILED` são finais.
+As transições ficam em `ALLOWED_TRANSITIONS` (`orders/model.py`), e `Order.transition_to()` rejeita qualquer outra (ex.: `PROCESSED → PROCESSING`). `PROCESSED` é final. `FAILED` só sai do lugar por reprocessamento manual.
+
+### Reprocessamento
+
+Um administrador pode devolver à fila um pedido que terminou em `FAILED` (ex.: o sistema interno ficou fora do ar por mais tempo que as retentativas, ou o cadastro do cliente foi liberado lá):
+
+```bash
+curl -b cookies.txt -H "Content-Type: application/json" \
+  -d '{"reason":"Sistema interno voltou"}' http://localhost:8000/api/orders/1/reprocess
+```
+
+- **Só `FAILED`.** `PROCESSED` já foi aceito pelo sistema interno (reprocessar poderia duplicar) e `RECEIVED`/`PROCESSING` já estão na fila: todos respondem `409 ORDER_NOT_REPROCESSABLE`.
+- **Sem reprocessamento duplicado.** O pedido é travado (`SELECT … FOR UPDATE`) antes da checagem do status: dois pedidos simultâneos geram um só; o outro recebe `409`.
+- **Rodadas.** O pedido volta para `RECEIVED` numa rodada nova (`cycle`), com as tentativas da rodada zeradas (`cycle_attempts`): mais 3 tentativas, com o backoff recomeçando em 5 s. O total de envios (`attempts`) continua somando e numera o histórico (4, 5, 6…); cada tentativa guarda a rodada em que aconteceu.
+- **Auditoria.** Cada reprocessamento fica em `order_reprocesses`: quem pediu, quando, o motivo e o erro que o pedido tinha antes (`last_error` é sobrescrito na rodada nova). Aparece em `GET /api/orders/{id}` → `reprocesses` e no log, com `order_id`, `external_id`, `cycle` e `user_id`.
+- **Mesmo `Idempotency-Key`.** O worker continua enviando o `externalId` como chave ao sistema interno. Se uma tentativa antiga foi processada lá apesar do timeout, o reprocessamento recebe o mesmo protocolo, sem duplicar.
+- **Mesmo worker.** Não existe processador especial: o reprocessamento só devolve o pedido à fila, e o worker segue as regras de sempre. O evento em tempo real é publicado na mesma transação.
+
+Na interface, o botão **Reprocessar pedido** aparece no detalhe de pedidos `FAILED` para administradores, com confirmação e motivo opcional. O histórico de tentativas mostra as rodadas separadas.
 
 ### Como testar na mão
 
@@ -374,6 +395,7 @@ O cenário é escolhido pelo prefixo do `externalId`:
 | `FAIL-…`       | recusa com HTTP 422 | `FAILED` na 1ª tentativa, sem repetir |
 | `FLAKY-…`      | HTTP 503 nas 2 primeiras chamadas | `PROCESSED` na 3ª tentativa |
 | `TIMEOUT-…`    | demora 30s (o worker desiste em 5s) | 3 tentativas e depois `FAILED` (tentativas esgotadas) |
+| `OUTAGE-…`     | HTTP 503 nas 3 primeiras chamadas (`INTERNAL_SYSTEM_OUTAGE_FAILURES`) e depois aceita | `FAILED` (tentativas esgotadas); **reprocessado**, vira `PROCESSED` |
 | valor > 100000 | recusa com HTTP 422 | `FAILED` na 1ª tentativa |
 
 \* `INTERNAL_SYSTEM_FAILURE_RATE` (padrão `0.2` no compose) faz 20% das chamadas falharem ao acaso com 503. Isso exercita as retentativas também nos pedidos comuns. Use `0` para um comportamento 100% determinístico.
@@ -439,6 +461,7 @@ O GraphQL é **outra porta de entrada para as mesmas regras**. Os resolvers só 
 | `orderStats` | query | login |
 | `receiveOrder(input)` | mutation | header `X-Webhook-Key` (igual ao webhook REST) |
 | `orderUpdated(id)` | subscription (WebSocket) | login |
+| `reprocessOrder(id, reason)` | mutation | login de administrador |
 | `simulateOrders(input)` / `resendOrder(id)` | mutation (simulador) | login + `ORDER_SIMULATOR_ENABLED=true` |
 | `orderSimulatorEnabled` | query | login |
 

@@ -25,10 +25,11 @@ from strawberry.fastapi import BaseContext
 
 from app.core.config import settings
 from app.modules.auth.cookies import delete_session_cookie
-from app.modules.auth.exceptions import AuthException
+from app.modules.auth.exceptions import AuthException, ForbiddenException
+from app.modules.auth.model import UserSession
 from app.modules.auth.repository import SessionRepository
 from app.modules.auth.service import AuthService
-from app.modules.users.model import User
+from app.modules.users.model import User, UserRole
 from app.modules.users.repository import UserRepository
 from app.shared.exceptions import AppException
 
@@ -47,6 +48,8 @@ class GraphQLContext(BaseContext):
         self._session_checked_at = 0.0
         self._db_lock = asyncio.Lock()
         self._auth_lock = asyncio.Lock()
+        # Sessão do ticket de conexão do WebSocket (ver auth/ws_ticket.py). Sem ticket, vale o cookie.
+        self.ws_session_id: int | None = None
 
     # ---------- banco ----------
 
@@ -83,16 +86,18 @@ class GraphQLContext(BaseContext):
         Validado uma vez por request, mesmo que vários campos da query peçam."""
         async with self._auth_lock:
             if self._user is None:
-                token = self.session_token
-                user, _ = await self.run(
-                    lambda db: AuthService(UserRepository(db), SessionRepository(db)).authenticate(
-                        token, touch=True
-                    )
-                )
+                user, _ = await self._authenticate(touch=True)
                 self._user = user
                 if isinstance(self.request, Request):
                     self.request.state.user_id = user.id  # aparece nos logs do request
         return self._user
+
+    async def require_admin(self) -> User:
+        """Como `require_user`, mas só para administradores (FORBIDDEN para os demais)."""
+        user = await self.require_user()
+        if user.role != UserRole.ADMIN:
+            raise self.to_graphql_error(ForbiddenException("Acesso restrito ao administrador"))
+        return user
 
     async def check_session_alive(self, *, min_interval: float = 0) -> None:
         """Confere a sessão SEM renovar (WebSocket: ficar conectado não conta como atividade).
@@ -100,11 +105,19 @@ class GraphQLContext(BaseContext):
         now = time.monotonic()
         if min_interval and now - self._session_checked_at < min_interval:
             return
-        token = self.session_token
-        await self.run(
-            lambda db: AuthService(UserRepository(db), SessionRepository(db)).authenticate(token, touch=False)
-        )
+        await self._authenticate(touch=False)
         self._session_checked_at = now
+
+    async def _authenticate(self, *, touch: bool) -> tuple[User, UserSession]:
+        token, session_id = self.session_token, self.ws_session_id
+
+        def check(db: Session) -> tuple[User, UserSession]:
+            service = AuthService(UserRepository(db), SessionRepository(db))
+            if session_id is not None:
+                return service.authenticate_session_id(session_id, touch=touch)
+            return service.authenticate(token, touch=touch)
+
+        return await self.run(check)
 
     # ---------- erros ----------
 

@@ -26,6 +26,11 @@ type Mutation {
   Simulador: reenvia um pedido existente com os mesmos dados (teste de idempotência: created=false, nada é criado nem reprocessado).
   """
   resendOrder(id: ID!): ReceiveOrderPayload!
+
+  """
+  Reprocessa um pedido em FAILED (equivalente ao POST /api/orders/{id}/reprocess): volta para RECEIVED com uma rodada nova de tentativas. Outros status: ORDER_NOT_REPROCESSABLE. Exige login de administrador.
+  """
+  reprocessOrder(id: ID!, reason: String = null): Order!
 }
 
 """Pedido recebido e seu estado de processamento"""
@@ -41,6 +46,9 @@ type Order {
   """Envios já feitos ao sistema interno"""
   attempts: Int!
 
+  """Rodada de processamento atual (soma 1 a cada reprocessamento)"""
+  cycle: Int!
+
   """Próxima tentativa (aguardando retentativa)"""
   nextAttemptAt: DateTime
   lastError: String
@@ -55,11 +63,17 @@ type Order {
 
   """Cada envio ao sistema interno, em ordem"""
   history: [OrderAttempt!]!
+
+  """Reprocessamentos manuais, em ordem"""
+  reprocesses: [OrderReprocess!]!
 }
 
 """Um envio do pedido ao sistema interno"""
 type OrderAttempt {
   number: Int!
+
+  """Rodada de processamento (1 = original, 2+ = reprocessamentos)"""
+  cycle: Int!
   startedAt: DateTime!
   finishedAt: DateTime!
   durationMs: Int!
@@ -72,6 +86,23 @@ type OrderPage {
   total: Int!
   page: Int!
   size: Int!
+}
+
+"""Um reprocessamento manual do pedido"""
+type OrderReprocess {
+  """1 = primeiro reprocessamento"""
+  number: Int!
+
+  """Rodada que este reprocessamento abriu"""
+  cycle: Int!
+
+  """Quem pediu"""
+  requestedBy: String
+  reason: String
+
+  """Erro que o pedido tinha antes"""
+  previousError: String
+  createdAt: DateTime!
 }
 
 """Quantidade de pedidos em cada status"""
@@ -140,6 +171,7 @@ enum SimulationScenario {
   REJECTED
   UNSTABLE
   TIMEOUT
+  OUTAGE
   RANDOM
 }
 

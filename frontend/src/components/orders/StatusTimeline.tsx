@@ -55,12 +55,14 @@ const StepDetail = styled.span`
 interface StatusTimelineProps {
   status: OrderStatus
   attempts: number
+  /** Rodada de processamento (2+ = reprocessado) */
+  cycle?: number
   /** Segundos até a próxima tentativa (quando aguardando retentativa) */
   retryIn: number | null
 }
 
 /** RECEBIDO → PROCESSANDO → PROCESSADO / FALHOU, com a etapa atual destacada. */
-export function StatusTimeline({ status, attempts, retryIn }: StatusTimelineProps) {
+export function StatusTimeline({ status, attempts, cycle = 1, retryIn }: StatusTimelineProps) {
   const processingState: StepState =
     status === 'RECEIVED' ? 'pending' : status === 'PROCESSING' ? 'current' : 'done'
   const finalState: StepState =
@@ -80,7 +82,7 @@ export function StatusTimeline({ status, attempts, retryIn }: StatusTimelineProp
     <List aria-label="Andamento do pedido">
       <Step $state="done" aria-current={status === 'RECEIVED' ? 'step' : undefined}>
         <StepTitle>Recebido</StepTitle>
-        <StepDetail>Gravado pela API</StepDetail>
+        <StepDetail>{cycle > 1 ? `Reprocessado · rodada ${cycle}` : 'Gravado pela API'}</StepDetail>
       </Step>
       <Step $state={processingState} aria-current={status === 'PROCESSING' ? 'step' : undefined}>
         <StepTitle>Processando</StepTitle>

@@ -97,3 +97,8 @@ def test_mock_scenarios(mock_system: TestClient) -> None:
     assert send(mock_system, "FAIL-1").status_code == 422
     assert send(mock_system, "ORDER-2", amount="100000.01").status_code == 422
     assert [send(mock_system, "FLAKY-1").status_code for _ in range(3)] == [503, 503, 200]
+
+
+def test_mock_outage_lasts_a_full_round_of_attempts(mock_system: TestClient) -> None:
+    # 3 falhas (a rodada inteira de tentativas) e depois volta: é o cenário do reprocessamento
+    assert [send(mock_system, "OUTAGE-1").status_code for _ in range(4)] == [503, 503, 503, 200]

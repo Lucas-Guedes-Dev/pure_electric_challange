@@ -24,7 +24,9 @@ from strawberry.types.unset import UNSET, UnsetType
 from app.core.config import settings
 from app.core.database import SessionFactory
 from app.core.graphql_context import GraphQLContext
+from app.modules.auth.ws_ticket import read_ticket
 from app.modules.orders.graphql import OrderMutation, OrderQuery, OrderSubscription
+from app.shared.exceptions import AppException
 
 logger = logging.getLogger("app.graphql")
 
@@ -83,6 +85,14 @@ class AppGraphQLRouter(GraphQLRouter):
         ws = context.request
         if ws is None or not _origin_allowed(ws.headers.get("origin"), ws.headers.get("host")):
             raise ConnectionRejectionError({"code": "FORBIDDEN_ORIGIN", "message": "Origem não permitida"})
+        # Ticket no connection_init (API em outro domínio que o cookie). Sem ticket, vale o cookie.
+        params = context.connection_params if isinstance(context.connection_params, dict) else {}
+        ticket = params.get("ticket")
+        try:
+            if isinstance(ticket, str) and ticket:
+                context.ws_session_id = read_ticket(ticket)
+        except AppException as exc:
+            raise ConnectionRejectionError({"code": exc.code, "message": exc.detail}) from exc
         try:
             await context.check_session_alive()
         except GraphQLError as exc:

@@ -48,6 +48,7 @@ class ElasticsearchLogHandler(logging.Handler):
         service_name: str,
         service_version: str,
         environment: str,
+        api_key: str | None = None,
         batch_size: int = 200,
         flush_interval: float = 2.0,
         retry_delay: float = 5.0,
@@ -56,6 +57,8 @@ class ElasticsearchLogHandler(logging.Handler):
     ) -> None:
         super().__init__()
         self._base_url = url.rstrip("/")
+        # Elastic Cloud: "Authorization: ApiKey <chave em base64>" (a chave "encoded" do Kibana)
+        self._auth_header = f"ApiKey {api_key}" if api_key else None
         self._data_stream = data_stream
         self._data_stream_ready = False
         self._batch_size = batch_size
@@ -159,12 +162,10 @@ class ElasticsearchLogHandler(logging.Handler):
 
     def _http(self, method: str, path: str, body: bytes | None = None) -> tuple[int, dict[str, Any]]:
         """Chamada ao Elasticsearch. Erros de rede sobem como URLError/OSError."""
-        request = urllib.request.Request(
-            f"{self._base_url}{path}",
-            data=body,
-            method=method,
-            headers={"Content-Type": "application/x-ndjson" if path.endswith("_bulk") else "application/json"},
-        )
+        headers = {"Content-Type": "application/x-ndjson" if path.endswith("_bulk") else "application/json"}
+        if self._auth_header:
+            headers["Authorization"] = self._auth_header
+        request = urllib.request.Request(f"{self._base_url}{path}", data=body, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 return response.status, json.loads(response.read() or b"{}")

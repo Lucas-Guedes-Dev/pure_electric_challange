@@ -1,5 +1,5 @@
 import { apiUrl, httpClient } from '../api/httpClient'
-import type { AuthSessionResponseDTO, LoginRequestDTO } from '../dtos/auth.dto'
+import type { AuthSessionResponseDTO, LoginRequestDTO, WsTicketResponseDTO } from '../dtos/auth.dto'
 
 export const authService = {
   /** Abre a sessão. O token volta só no cookie HttpOnly, nunca no corpo. */
@@ -14,6 +14,9 @@ export const authService = {
 
   /** "Continuar conectado": renova o prazo de inatividade. */
   refresh: () => httpClient.post<AuthSessionResponseDTO>('/auth/refresh'),
+
+  /** Ticket de curta duração para abrir o WebSocket do GraphQL (não renova a sessão). */
+  wsTicket: () => httpClient.post<WsTicketResponseDTO>('/auth/ws-ticket'),
 
   /** Stream SSE pelo qual o backend avisa sobre a sessão (session / expiring / logout). */
   events: () => new EventSource(apiUrl('/auth/events'), { withCredentials: true }),

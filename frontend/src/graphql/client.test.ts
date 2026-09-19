@@ -17,4 +17,10 @@ describe('graphqlWsUrl', () => {
       'wss://api.exemplo.com/api/graphql',
     )
   })
+
+  it('VITE_GRAPHQL_WS_URL tem prioridade (Vercel: WebSocket direto na API do Railway)', () => {
+    expect(
+      graphqlWsUrl('/api/graphql', page('https://app.vercel.app/'), 'wss://api.up.railway.app/api/graphql'),
+    ).toBe('wss://api.up.railway.app/api/graphql')
+  })
 })

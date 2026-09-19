@@ -20,6 +20,8 @@ from app.modules.orders.dtos import (
     OrderAttemptDTO,
     OrderCreateDTO,
     OrderListParamsDTO,
+    OrderReprocessDTO,
+    OrderReprocessRequestDTO,
     OrderResponseDTO,
 )
 from app.modules.orders.events import order_event_broker
@@ -55,6 +57,7 @@ def simulator(db: Session) -> OrderSimulator:
 @strawberry.type(name="OrderAttempt", description="Um envio do pedido ao sistema interno")
 class OrderAttemptType:
     number: int
+    cycle: int = strawberry.field(description="Rodada de processamento (1 = original, 2+ = reprocessamentos)")
     started_at: datetime
     finished_at: datetime
     duration_ms: int
@@ -65,6 +68,7 @@ class OrderAttemptType:
     def from_dto(cls, dto: OrderAttemptDTO) -> "OrderAttemptType":
         return cls(
             number=dto.number,
+            cycle=dto.cycle,
             started_at=dto.started_at,
             finished_at=dto.finished_at,
             duration_ms=dto.duration_ms,
@@ -85,6 +89,38 @@ def history_loader(ctx: GraphQLContext) -> DataLoader[int, list[OrderAttemptType
     return ctx.loader("order_history", lambda: DataLoader(load_fn=load, cache=False))
 
 
+@strawberry.type(name="OrderReprocess", description="Um reprocessamento manual do pedido")
+class OrderReprocessType:
+    number: int = strawberry.field(description="1 = primeiro reprocessamento")
+    cycle: int = strawberry.field(description="Rodada que este reprocessamento abriu")
+    requested_by: str | None = strawberry.field(description="Quem pediu")
+    reason: str | None
+    previous_error: str | None = strawberry.field(description="Erro que o pedido tinha antes")
+    created_at: datetime
+
+    @classmethod
+    def from_dto(cls, dto: OrderReprocessDTO) -> "OrderReprocessType":
+        return cls(
+            number=dto.number,
+            cycle=dto.cycle,
+            requested_by=dto.requested_by,
+            reason=dto.reason,
+            previous_error=dto.previous_error,
+            created_at=dto.created_at,
+        )
+
+
+def reprocesses_loader(ctx: GraphQLContext) -> DataLoader[int, list[OrderReprocessType]]:
+    """Reprocessamentos de todos os pedidos pedidos numa consulta só (mesma ideia do histórico)."""
+
+    async def load(order_ids: list[int]) -> list[list[OrderReprocessType]]:
+        ids = list(order_ids)
+        by_order = await ctx.run(lambda db: service(db).reprocesses_by_order_ids(ids))
+        return [[OrderReprocessType.from_dto(r) for r in by_order.get(order_id, [])] for order_id in ids]
+
+    return ctx.loader("order_reprocesses", lambda: DataLoader(load_fn=load, cache=False))
+
+
 @strawberry.type(name="Order", description="Pedido recebido e seu estado de processamento")
 class OrderType:
     id: strawberry.ID
@@ -93,6 +129,7 @@ class OrderType:
     amount: Decimal = strawberry.field(description="Valor com 2 casas, como string (ex.: \"150.00\")")
     status: OrderStatus
     attempts: int = strawberry.field(description="Envios já feitos ao sistema interno")
+    cycle: int = strawberry.field(description="Rodada de processamento atual (soma 1 a cada reprocessamento)")
     next_attempt_at: datetime | None = strawberry.field(description="Próxima tentativa (aguardando retentativa)")
     last_error: str | None
     internal_reference: str | None = strawberry.field(description="Protocolo do sistema interno")
@@ -105,6 +142,10 @@ class OrderType:
     async def history(self, info: Ctx) -> list[OrderAttemptType]:
         return await history_loader(info.context).load(self.pk)
 
+    @strawberry.field(description="Reprocessamentos manuais, em ordem")
+    async def reprocesses(self, info: Ctx) -> list[OrderReprocessType]:
+        return await reprocesses_loader(info.context).load(self.pk)
+
     @classmethod
     def from_dto(cls, dto: OrderResponseDTO) -> "OrderType":
         return cls(
@@ -115,6 +156,7 @@ class OrderType:
             amount=dto.amount,
             status=dto.status,
             attempts=dto.attempts,
+            cycle=dto.cycle,
             next_attempt_at=dto.next_attempt_at,
             last_error=dto.last_error,
             internal_reference=dto.internal_reference,
@@ -261,6 +303,20 @@ class OrderMutation:
         order_id = parse_id(id)
         result = await ctx.run(lambda db: simulator(db).resend(order_id))
         return ReceiveOrderPayload.from_result(result)
+
+
+    @strawberry.mutation(
+        description="Reprocessa um pedido em FAILED (equivalente ao POST /api/orders/{id}/reprocess): "
+        "volta para RECEIVED com uma rodada nova de tentativas. Outros status: "
+        "ORDER_NOT_REPROCESSABLE. Exige login de administrador."
+    )
+    async def reprocess_order(self, info: Ctx, id: strawberry.ID, reason: str | None = None) -> OrderType:
+        ctx = info.context
+        user = await ctx.require_admin()
+        order_id = parse_id(id)
+        request = validate_input(OrderReprocessRequestDTO, {"reason": reason})
+        dto = await ctx.run(lambda db: service(db).reprocess(order_id, user, request))
+        return OrderType.from_dto(dto)
 
 
 @strawberry.type

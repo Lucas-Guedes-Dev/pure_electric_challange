@@ -22,6 +22,8 @@ settings.password_hash_rounds = 4
 # Testes não dependem do ambiente (no container ORDERS_WEBHOOK_KEY vem preenchido).
 # O teste da chave do webhook a configura explicitamente.
 settings.orders_webhook_key = None
+# Idem para o simulador (o compose o liga): os testes que precisam dele o ligam explicitamente
+settings.order_simulator_enabled = False
 # Sem Postgres nos testes: nada de LISTEN (a subscription é testada publicando direto no broker)
 settings.order_events_listener_enabled = False
 

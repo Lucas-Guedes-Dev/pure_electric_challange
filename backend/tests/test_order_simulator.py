@@ -28,7 +28,8 @@ def count_orders(db: Session) -> int:
 
 @pytest.mark.parametrize(
     ("scenario", "prefix"),
-    [("SUCCESS", "ORDER-SIM-"), ("REJECTED", "FAIL-SIM-"), ("UNSTABLE", "FLAKY-SIM-"), ("TIMEOUT", "TIMEOUT-SIM-")],
+    [("SUCCESS", "ORDER-SIM-"), ("REJECTED", "FAIL-SIM-"), ("UNSTABLE", "FLAKY-SIM-"), ("TIMEOUT", "TIMEOUT-SIM-"),
+     ("OUTAGE", "OUTAGE-SIM-")],
 )
 def test_simulate_creates_orders_for_the_scenario(
     logged_client: TestClient, db: Session, simulator_on: None, scenario: str, prefix: str
@@ -48,7 +49,7 @@ def test_random_scenario_uses_known_prefixes(logged_client: TestClient, simulato
     body = gql(logged_client, SIMULATE, {"input": {"scenario": "RANDOM", "count": 20}})
 
     prefixes = {r["order"]["externalId"].split("-")[0] for r in body["data"]["simulateOrders"]}
-    assert prefixes <= {"ORDER", "FAIL", "FLAKY", "TIMEOUT"}
+    assert prefixes <= {"ORDER", "FAIL", "FLAKY", "TIMEOUT", "OUTAGE"}
 
 
 def test_count_is_limited(logged_client: TestClient, simulator_on: None) -> None:

@@ -11,17 +11,24 @@ from app.modules.orders.dtos import (
     OrderCreateDTO,
     OrderDetailDTO,
     OrderListParamsDTO,
+    OrderReprocessDTO,
+    OrderReprocessRequestDTO,
     OrderResponseDTO,
     OrderStatsDTO,
 )
 from app.modules.orders.events import publish_order_event
-from app.modules.orders.model import Order, OrderStatus
+from app.modules.orders.model import Order, OrderReprocess, OrderStatus
 from app.modules.orders.repository import OrderRepository
+from app.modules.users.model import User
 from app.shared.clock import as_utc, utcnow
 from app.shared.dtos import PageDTO
 from app.shared.exceptions import ConflictException, NotFoundException
 
 logger = logging.getLogger(__name__)
+
+
+class OrderNotReprocessableException(ConflictException):
+    code = "ORDER_NOT_REPROCESSABLE"
 
 
 @dataclass(frozen=True)
@@ -35,16 +42,31 @@ def to_response(order: Order) -> OrderResponseDTO:
     dto = OrderResponseDTO.model_validate(order)
     # `next_attempt_at` só interessa enquanto o pedido aguarda uma retentativa
     waiting_retry = (
-        order.status == OrderStatus.PROCESSING and order.locked_until is None and order.attempts > 0
+        order.status == OrderStatus.PROCESSING and order.locked_until is None and order.cycle_attempts > 0
     )
     return dto.model_copy(
         update={"next_attempt_at": as_utc(order.next_attempt_at) if waiting_retry else None}
     )
 
 
+def to_reprocess(reprocess: OrderReprocess) -> OrderReprocessDTO:
+    user = reprocess.requested_by
+    return OrderReprocessDTO(
+        number=reprocess.number,
+        cycle=reprocess.number + 1,
+        requested_by=(user.full_name or user.username) if user is not None else None,
+        reason=reprocess.reason,
+        previous_error=reprocess.previous_error,
+        created_at=as_utc(reprocess.created_at),
+    )
+
+
 def to_detail(order: Order) -> OrderDetailDTO:
     history = [OrderAttemptDTO.model_validate(attempt) for attempt in order.processing_attempts]
-    return OrderDetailDTO.model_validate({**to_response(order).model_dump(), "history": history})
+    reprocesses = [to_reprocess(reprocess) for reprocess in order.reprocesses]
+    return OrderDetailDTO.model_validate(
+        {**to_response(order).model_dump(), "history": history, "reprocesses": reprocesses}
+    )
 
 
 class OrderService:
@@ -124,6 +146,58 @@ class OrderService:
             order_id: [OrderAttemptDTO.model_validate(a) for a in items]
             for order_id, items in attempts.items()
         }
+
+    def reprocesses_by_order_ids(self, order_ids: list[int]) -> dict[int, list[OrderReprocessDTO]]:
+        """Reprocessamentos de vários pedidos numa consulta só (DataLoader do GraphQL)."""
+        reprocesses = self.repository.reprocesses_by_order_ids(order_ids)
+        return {order_id: [to_reprocess(r) for r in items] for order_id, items in reprocesses.items()}
+
+    def reprocess(self, order_id: int, user: User, request: OrderReprocessRequestDTO) -> OrderResponseDTO:
+        """Devolve à fila um pedido que terminou em FAILED, com uma rodada nova de tentativas.
+
+        Só FAILED: PROCESSED já foi aceito pelo sistema interno (reprocessar poderia duplicar)
+        e RECEIVED/PROCESSING já estão na fila. O pedido fica travado durante a checagem,
+        então dois pedidos de reprocessamento simultâneos geram um só (o outro recebe 409)."""
+        db = self.repository.db
+        order = self.repository.get_for_update(order_id)
+        if order is None:
+            raise NotFoundException(f"Pedido {order_id} não encontrado")
+        if order.status != OrderStatus.FAILED:
+            db.rollback()
+            raise OrderNotReprocessableException(
+                f"Só pedidos com falha (FAILED) podem ser reprocessados; "
+                f"o pedido {order.external_id} está em {order.status.value}"
+            )
+
+        now = utcnow()
+        number = order.cycle  # o 1º reprocessamento sai da rodada 1
+        db.add(OrderReprocess(
+            order_id=order.id,
+            number=number,
+            requested_by_id=user.id,
+            reason=request.reason or None,
+            previous_error=order.last_error,
+            created_at=now,
+        ))
+        order.reprocess(now)
+        publish_order_event(db, order)  # sai junto com o commit
+        db.commit()
+        db.refresh(order)
+
+        logger.info(
+            "Pedido %s reprocessado por %s (reprocessamento %s)",
+            order.external_id,
+            user.username,
+            number,
+            extra={"ecs": {"labels": {
+                "order_id": order.id,
+                "external_id": order.external_id,
+                "cycle": order.cycle,
+                "reprocess": number,
+                "user_id": user.id,
+            }}},
+        )
+        return to_response(order)
 
     def list(self, params: OrderListParamsDTO) -> PageDTO[OrderResponseDTO]:
         orders, total = self.repository.search(

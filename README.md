@@ -49,7 +49,7 @@ docker compose exec backend python -m app.cli create-user --username admin --ema
     -d '{ "externalId": "ORDER-123", "customer": "Cliente Exemplo", "amount": 150.00 }'
   ```
 
-  O prefixo do `externalId` escolhe como o sistema interno responde: `FAIL-…` recusa, `FLAKY-…` falha 2 vezes e depois aceita, `TIMEOUT-…` não responde a tempo. Qualquer outro prefixo é aceito.
+  O prefixo do `externalId` escolhe como o sistema interno responde: `FAIL-…` recusa, `FLAKY-…` falha 2 vezes e depois aceita, `TIMEOUT-…` não responde a tempo, `OUTAGE-…` fica fora do ar nas 3 tentativas (termina `FAILED`) e volta depois, para demonstrar o reprocessamento. Qualquer outro prefixo é aceito.
 
 > O sistema interno simulado também **falha ao acaso em 20% das chamadas**, para mostrar as retentativas. Raramente, um pedido comum termina `FAILED` depois de 3 tentativas. Para um comportamento 100% previsível, crie um arquivo `.env` na raiz com `INTERNAL_SYSTEM_FAILURE_RATE=0` antes de subir.
 
@@ -82,10 +82,10 @@ Todos os 12 requisitos são cumpridos. Os testes automatizados passam: 128 no ba
 | Processamento assíncrono | ✅ | A API só grava o pedido e responde `202`; o processamento acontece depois, fora da requisição | `orders/processor.py` |
 | Consumer/worker | ✅ | Container `worker` separado da API. Pode rodar com várias cópias (`--scale worker=3`), sem que dois workers processem o mesmo pedido (`FOR UPDATE SKIP LOCKED`) | `orders/worker.py` + `orders/processor.py` |
 | Simulação do envio para um sistema interno separado, com sucesso e falha | ✅ | Container `internal-system` separado, com cenários de sucesso, recusa (422), instável (503) e timeout, além de falhas aleatórias. Na interface, o **simulador** envia pedidos em cada cenário | `backend/internal_system/main.py` |
-| Controle dos estados RECEIVED, PROCESSING, PROCESSED e FAILED | ✅ | Transições validadas: uma transição inválida, como `PROCESSED → PROCESSING`, é rejeitada | `orders/model.py` → `OrderStatus` + `ALLOWED_TRANSITIONS` |
-| Tratamento básico de falhas | ✅ | Nova tentativa com espera crescente (5 s e depois 10 s) para falhas temporárias; `FAILED` direto quando o sistema interno recusa; se o worker cair, outro retoma o pedido quando a reserva vence; histórico de cada tentativa | `orders/processor.py` + `orders/internal_client.py` |
+| Controle dos estados RECEIVED, PROCESSING, PROCESSED e FAILED | ✅ | Transições validadas: uma transição inválida, como `PROCESSED → PROCESSING`, é rejeitada. `FAILED → RECEIVED` só por reprocessamento manual | `orders/model.py` → `OrderStatus` + `ALLOWED_TRANSITIONS` |
+| Tratamento básico de falhas | ✅ | Nova tentativa com espera crescente (5 s e depois 10 s) para falhas temporárias; `FAILED` direto quando o sistema interno recusa; se o worker cair, outro retoma o pedido quando a reserva vence; histórico de cada tentativa; reprocessamento manual de pedidos `FAILED` (`POST /api/orders/{id}/reprocess`, mutation `reprocessOrder` e botão no detalhe do pedido) | `orders/processor.py` + `orders/internal_client.py` + `OrderService.reprocess` |
 | Consulta dos pedidos e respectivos status | ✅ | REST (`GET /api/orders`, `/api/orders/{id}`, `/api/orders/stats`), GraphQL (queries e subscription em tempo real) e a interface em http://localhost:5173/pedidos | `orders/controller.py`, `orders/graphql.py`, `frontend/src/pages/OrdersPage.tsx` |
-| Testes das principais regras de negócio | ✅ | Validação, idempotência (inclusive concorrente), estados, retentativas, falhas, retomada após queda do worker, integração com o mock, GraphQL e simulador | `backend/tests/test_orders_*.py`, `test_graphql_*.py`, `test_order_simulator.py`; `frontend/src/**/*.test.ts(x)` |
+| Testes das principais regras de negócio | ✅ | Validação, idempotência (inclusive concorrente), estados, retentativas, falhas, retomada após queda do worker, reprocessamento, integração com o mock, GraphQL e simulador | `backend/tests/test_orders_*.py`, `test_order_reprocess.py`, `test_graphql_*.py`, `test_order_simulator.py`; `frontend/src/**/*.test.ts(x)` |
 | README com instruções, decisões técnicas e respostas | ✅ | Este arquivo: como rodar, esta tabela e as respostas às perguntas do desafio (idempotência, indisponibilidade, evolução, decisões técnicas, trade-offs e pendências) | [Perguntas do desafio](#perguntas-do-desafio) |
 
 ## Perguntas do desafio
@@ -110,9 +110,10 @@ Na interface, o botão **Reenviar pedido** (detalhe do pedido) demonstra a idemp
 - **Falhas temporárias** (timeout, erro de rede, HTTP 5xx, 408, 425 e 429) geram uma nova tentativa com espera crescente: 5 s e depois 10 s (`ORDER_RETRY_BASE_SECONDS`). Enquanto espera, o pedido fica `PROCESSING` e aparece como "Aguardando retentativa", com contagem regressiva na interface. Depois de 3 tentativas (`ORDER_MAX_ATTEMPTS`), vira `FAILED` com a mensagem "Tentativas esgotadas".
 - **Recusas** (demais HTTP 4xx) viram `FAILED` na hora, sem repetir, porque tentar de novo não mudaria a resposta.
 - **Worker que cai no meio do envio:** a reserva do pedido vence em 60 s e outro worker o retoma.
+- **Queda mais longa que as retentativas:** o pedido termina `FAILED`, mas não se perde. Quando o sistema interno voltar, um administrador o **reprocessa** (botão no detalhe do pedido, `POST /api/orders/{id}/reprocess` ou mutation `reprocessOrder`). O pedido volta para `RECEIVED` com uma rodada nova de 3 tentativas; o histórico anterior é mantido e fica registrado quem reprocessou, quando, o motivo e o erro anterior. O `Idempotency-Key` enviado ao sistema interno continua o mesmo: se uma tentativa antiga tiver sido processada lá apesar do timeout, o reprocessamento recebe o mesmo protocolo em vez de duplicar o pedido.
 - **Diagnóstico:** cada tentativa fica registrada em `order_attempts`, com duração, resultado e mensagem, e também vai para os logs (Kibana).
 
-Os cenários `FLAKY-…` (instável) e `TIMEOUT-…` (sem resposta) do simulador reproduzem esses casos.
+Os cenários `FLAKY-…` (instável), `TIMEOUT-…` (sem resposta) e `OUTAGE-…` (fora do ar, para reprocessar depois) do simulador reproduzem esses casos.
 
 ### Evolução da arquitetura: como integrar ERP, transportadora e gateway de pagamento?
 
@@ -154,7 +155,7 @@ Detalhes em [backend/README.md › Decisões técnicas](backend/README.md#decis�
 
 | Pendência | Como eu implementaria |
 |-----------|-----------------------|
-| Reprocessar pedido `FAILED` pela interface | Ação de administrador `retryOrder`: permitir a transição `FAILED → RECEIVED` só nesse caso, zerar as tentativas e registrar quem pediu |
+| Reprocessamento em lote e automático | Hoje o reprocessamento é manual, um pedido por vez. Evolução: reprocessar vários de uma vez (ex.: todos os `FAILED` por indisponibilidade de hoje) e uma política automática, como uma DLQ com nova rodada agendada |
 | Testes contra Postgres real e E2E | pytest com Postgres em container (testcontainers) para concorrência da fila e `LISTEN/NOTIFY`; Playwright para os fluxos da interface |
 | CI | GitHub Actions rodando lint, testes, checagem do schema/codegen e build das imagens |
 | Resiliência | *Circuit breaker* por integração, *jitter* na espera e envios concorrentes dentro do worker (cliente HTTP assíncrono) |

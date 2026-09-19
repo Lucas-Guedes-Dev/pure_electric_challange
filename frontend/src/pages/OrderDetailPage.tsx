@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import styled from 'styled-components'
-import { AttemptsTable, LiveIndicator, StatusBadge, StatusTimeline } from '../components/orders'
+import { AttemptsTable, LiveIndicator, ReprocessPanel, StatusBadge, StatusTimeline } from '../components/orders'
 import { Alert, Button, Card, Eyebrow, Heading, Stack, Text } from '../components/ui'
 import { useCountdown } from '../hooks/useCountdown'
 import { useOrderDetail, useOrderSimulator } from '../hooks/useOrders'
@@ -120,15 +120,17 @@ export function OrderDetailPage() {
             </Facts>
           </Card>
 
-          <StatusTimeline status={order.status} attempts={order.attempts} retryIn={retryIn} />
+          <StatusTimeline status={order.status} attempts={order.attempts} cycle={order.cycle} retryIn={retryIn} />
 
           {order.lastError && (
             <Alert tone={order.status === 'FAILED' ? 'danger' : 'warning'}>{order.lastError}</Alert>
           )}
 
+          <ReprocessPanel orderId={order.id} externalId={order.externalId} status={order.status} />
+
           <Stack $gap="sm">
             <Heading level={3}>Histórico de tentativas</Heading>
-            <AttemptsTable attempts={order.history} />
+            <AttemptsTable attempts={order.history} reprocesses={order.reprocesses} />
           </Stack>
 
           {simulator.enabled && (

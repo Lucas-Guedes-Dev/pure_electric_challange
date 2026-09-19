@@ -31,6 +31,12 @@ export interface AuthSessionResponseDTO {
   session: SessionInfoDTO
 }
 
+/** POST /api/auth/ws-ticket: abre o WebSocket quando ele está em outro domínio que o cookie */
+export interface WsTicketResponseDTO {
+  ticket: string
+  expires_in_seconds: number
+}
+
 // ---------- Eventos do stream SSE (GET /api/auth/events) ----------
 
 /** `event: session` e `event: expiring` */

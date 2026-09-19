@@ -48,6 +48,7 @@ class OrderCreateDTO(CamelDTO):
 
 class OrderAttemptDTO(CamelDTO):
     number: int = Field(examples=[1])
+    cycle: int = Field(description="Rodada de processamento (1 = original, 2+ = reprocessamentos)", examples=[1])
     started_at: datetime
     finished_at: datetime
     duration_ms: int = Field(examples=[182])
@@ -62,6 +63,9 @@ class OrderResponseDTO(CamelDTO):
     amount: Decimal = Field(examples=["150.00"])
     status: OrderStatus
     attempts: int = Field(description="Envios já feitos ao sistema interno", examples=[1])
+    cycle: int = Field(
+        description="Rodada de processamento atual (1 = original; soma 1 a cada reprocessamento)", examples=[1]
+    )
     next_attempt_at: datetime | None = Field(
         default=None, description="Próxima tentativa (só enquanto aguarda retentativa)"
     )
@@ -74,8 +78,35 @@ class OrderResponseDTO(CamelDTO):
     finished_at: datetime | None = Field(default=None, description="Quando chegou a PROCESSED ou FAILED")
 
 
+class OrderReprocessDTO(CamelDTO):
+    """Um reprocessamento manual do pedido."""
+
+    number: int = Field(description="1 = primeiro reprocessamento", examples=[1])
+    cycle: int = Field(description="Rodada que este reprocessamento abriu", examples=[2])
+    requested_by: str | None = Field(
+        default=None, description="Quem pediu (nome ou usuário)", examples=["Administrador"]
+    )
+    reason: str | None = Field(default=None, examples=["Cadastro do cliente liberado no sistema interno"])
+    previous_error: str | None = Field(
+        default=None, description="Erro que o pedido tinha antes de ser reprocessado"
+    )
+    created_at: datetime
+
+
 class OrderDetailDTO(OrderResponseDTO):
     history: list[OrderAttemptDTO] = Field(description="Cada envio ao sistema interno, em ordem")
+    reprocesses: list[OrderReprocessDTO] = Field(
+        default_factory=list, description="Reprocessamentos manuais, em ordem"
+    )
+
+
+class OrderReprocessRequestDTO(CamelDTO):
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Motivo do reprocessamento (opcional; fica registrado no pedido)",
+        examples=["Cadastro do cliente liberado no sistema interno"],
+    )
 
 
 class OrderListParamsDTO(PaginationParamsDTO):

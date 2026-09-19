@@ -10,6 +10,7 @@ import {
   ORDER_UPDATED_SUBSCRIPTION,
   ORDERS_QUERY,
   ORDERS_UPDATED_SUBSCRIPTION,
+  REPROCESS_ORDER_MUTATION,
   RESEND_ORDER_MUTATION,
   SIMULATE_ORDERS_MUTATION,
   SIMULATOR_ENABLED_QUERY,
@@ -163,4 +164,10 @@ export function useOrderSimulator() {
     resending,
     resend,
   }
+}
+
+/** Reprocessamento de pedido FAILED (só administrador; o backend confere). */
+export function useReprocessOrder() {
+  const [state, reprocess] = useMutation(REPROCESS_ORDER_MUTATION)
+  return { reprocessing: state.fetching, reprocess }
 }
