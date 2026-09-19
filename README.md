@@ -155,7 +155,6 @@ Detalhes em [backend/README.md › Decisões técnicas](backend/README.md#decis�
 
 | Pendência | Como eu implementaria |
 |-----------|-----------------------|
-| Reprocessamento em lote e automático | Hoje o reprocessamento é manual, um pedido por vez. Evolução: reprocessar vários de uma vez (ex.: todos os `FAILED` por indisponibilidade de hoje) e uma política automática, como uma DLQ com nova rodada agendada |
 | Testes contra Postgres real e E2E | pytest com Postgres em container (testcontainers) para concorrência da fila e `LISTEN/NOTIFY`; Playwright para os fluxos da interface |
 | CI | GitHub Actions rodando lint, testes, checagem do schema/codegen e build das imagens |
 | Resiliência | *Circuit breaker* por integração, *jitter* na espera e envios concorrentes dentro do worker (cliente HTTP assíncrono) |
