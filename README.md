@@ -165,3 +165,13 @@ Detalhes em [backend/README.md › Decisões técnicas](backend/README.md#decis�
 | Manutenção de dados | Rotina para apagar sessões expiradas e arquivar pedidos antigos |
 | Mock com estado durável | Guardar as chaves de idempotência do mock em Redis |
 | Produção | Segredos fora do compose, HTTPS com `SESSION_COOKIE_SECURE=true`, simulador desligado e Elasticsearch com autenticação |
+
+## Uso de IA no desenvolvimento
+
+Usei IA (Claude Code) como ferramenta de produtividade, não como autora da solução. A divisão de trabalho ficou clara:
+
+Comigo ficaram: entender o problema, definir a arquitetura, as regras de negócio e os critérios de qualidade, e decidir o que entrava ou não na solução.
+
+O agente de IA ajudou em: escrever o código repetitivo (DTOs, rotas, repositórios, migrations, componentes de tela) e montar os testes automatizados a partir dos cenários que eu definia.
+
+Tudo o que a IA gerava passava pela minha revisão antes de entrar no projeto. Eu lia as alterações, conferia se seguiam as decisões de arquitetura e rodava a aplicação e os testes. Quando algo não estava como eu queria, eu pedia a correção ou redirecionava a abordagem. Enquanto o agente cuidava da parte mecânica, eu me concentrava na lógica: estados do pedido, idempotência, fila e processamento assíncrono, sessão e tratamento de falhas.
