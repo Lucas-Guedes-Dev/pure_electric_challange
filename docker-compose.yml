@@ -1,0 +1,191 @@
+name: pure-eletric
+
+# Variáveis comuns à API e ao worker (mesmo código, processos diferentes)
+x-app-env: &app-env
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_DB: ${POSTGRES_DB:-pure_eletric}
+  POSTGRES_HOST: db
+  POSTGRES_PORT: 5432
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  # Logs vão para o Elasticsearch (visualização no Kibana). Vazio = só console
+  ELASTICSEARCH_URL: ${ELASTICSEARCH_URL-http://elasticsearch:9200}
+  WATCHFILES_FORCE_POLLING: "true"
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-pure_eletric}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    # --no-access-log: o RequestLoggingMiddleware já registra cada request (com mais detalhes)
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
+    environment:
+      <<: *app-env
+      DEBUG: ${DEBUG:-false}
+      DOCS_ENABLED: ${DOCS_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      # Chave que o sistema externo manda no header X-Webhook-Key ao enviar pedidos
+      ORDERS_WEBHOOK_KEY: ${ORDERS_WEBHOOK_KEY:-dev-webhook-key}
+      # Simulador de pedidos na interface (só desenvolvimento/demonstração)
+      ORDER_SIMULATOR_ENABLED: ${ORDER_SIMULATOR_ENABLED:-true}
+      SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-30}
+      SESSION_ABSOLUTE_TIMEOUT_MINUTES: ${SESSION_ABSOLUTE_TIMEOUT_MINUTES:-480}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # Confia no X-Forwarded-For vindo do proxy do Vite/nginx (IP real no rate limit do login).
+      # Em produção, troque "*" pelo IP do proxy.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    # "Saudável" = migrations aplicadas e API respondendo. O worker espera por isso.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # Consumer: processa os pedidos de forma assíncrona, fora da API.
+  # Escala horizontal: docker compose up -d --scale worker=3
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    # Não roda o entrypoint.sh: as migrations ficam a cargo do backend
+    entrypoint: []
+    # watchfiles reinicia o worker ao salvar um arquivo (hot reload em dev)
+    command: ["watchfiles", "--filter", "python", "python -m app.modules.orders.worker", "app"]
+    environment:
+      <<: *app-env
+      SERVICE_NAME: pure-eletric-worker
+      INTERNAL_SYSTEM_URL: http://internal-system:9000
+      INTERNAL_SYSTEM_TIMEOUT_SECONDS: ${INTERNAL_SYSTEM_TIMEOUT_SECONDS:-5}
+      ORDER_MAX_ATTEMPTS: ${ORDER_MAX_ATTEMPTS:-3}
+      ORDER_RETRY_BASE_SECONDS: ${ORDER_RETRY_BASE_SECONDS:-5}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+      internal-system:
+        condition: service_started
+
+  # Sistema interno MOCKADO, separado da API: recebe os pedidos do worker por HTTP.
+  # Cenários de falha pelo externalId: FAIL-*, FLAKY-*, TIMEOUT-* (ver backend/internal_system)
+  internal-system:
+    build: ./backend
+    restart: unless-stopped
+    entrypoint: []
+    command: ["uvicorn", "internal_system.main:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
+    environment:
+      # Fração das chamadas que falham ao acaso (HTTP 503), para exercitar as retentativas
+      INTERNAL_SYSTEM_FAILURE_RATE: ${INTERNAL_SYSTEM_FAILURE_RATE:-0.2}
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "127.0.0.1:${INTERNAL_SYSTEM_PORT:-9000}:9000"
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: /api
+      VITE_PROXY_TARGET: http://backend:8000
+      VITE_USE_POLLING: "true"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+  # --- Observabilidade: logs da API no Elasticsearch, visualizados no Kibana ---
+  # Segurança do Elastic desligada: uso só em desenvolvimento. As portas ficam presas
+  # ao localhost da máquina para não expor o cluster sem senha na rede.
+  elasticsearch:
+    image: elasticsearch:${ELASTIC_VERSION:-9.5.3}
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      # Sem isso o ES bloqueia escrita quando o disco da máquina passa de 90%
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      # Recursos que não usamos e pesam bastante (o ML sobe um processo nativo e cria
+      # dezenas de índices/templates): desligados para caber em máquinas com pouca RAM
+      xpack.ml.enabled: "false"
+      xpack.watcher.enabled: "false"
+      ES_JAVA_OPTS: -Xms${ELASTIC_HEAP:-512m} -Xmx${ELASTIC_HEAP:-512m}
+    mem_limit: ${ELASTIC_MEM_LIMIT:-1g}
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      # Falhas durante o start_period não contam (a 1ª subida é a mais lenta)
+      start_period: 3m
+
+  kibana:
+    image: kibana:${ELASTIC_VERSION:-9.5.3}
+    restart: unless-stopped
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+      TELEMETRY_OPTIN: "false"
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status | grep -q '\"level\":\"available\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      # Na 1ª subida o Kibana cria seus índices internos: com pouca RAM leva vários minutos
+      start_period: 10m
+
+  # Roda uma vez e sai: cria o data view dos logs da API no Kibana.
+  # Depende só do Kibana ter INICIADO (o script espera ele ficar disponível): assim um
+  # Kibana lento não faz o "docker compose up" inteiro falhar.
+  kibana-setup:
+    image: kibana:${ELASTIC_VERSION:-9.5.3}
+    restart: "no"
+    entrypoint: ["sh", "/setup.sh"]
+    environment:
+      KIBANA_PORT: ${KIBANA_PORT:-5601}
+    volumes:
+      - ./infra/kibana/setup.sh:/setup.sh:ro
+    depends_on:
+      kibana:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  elasticsearch_data:

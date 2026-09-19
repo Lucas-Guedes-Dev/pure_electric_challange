@@ -1,0 +1,151 @@
+"""Resultado de um envio ao sistema interno"""
+enum AttemptOutcome {
+  SUCCESS
+  TRANSIENT_ERROR
+  PERMANENT_ERROR
+}
+
+"""Date with time (isoformat)"""
+scalar DateTime
+
+"""Decimal (fixed-point)"""
+scalar Decimal
+
+type Mutation {
+  """
+  Recebe um pedido (equivalente ao POST /api/orders). Idempotente pelo externalId. Exige o header X-Webhook-Key.
+  """
+  receiveOrder(input: ReceiveOrderInput!): ReceiveOrderPayload!
+
+  """
+  Simulador: cria pedidos como se viessem do sistema externo, pelo mesmo fluxo do webhook. Exige login e ORDER_SIMULATOR_ENABLED=true.
+  """
+  simulateOrders(input: SimulateOrdersInput!): [ReceiveOrderPayload!]!
+
+  """
+  Simulador: reenvia um pedido existente com os mesmos dados (teste de idempotência: created=false, nada é criado nem reprocessado).
+  """
+  resendOrder(id: ID!): ReceiveOrderPayload!
+}
+
+"""Pedido recebido e seu estado de processamento"""
+type Order {
+  id: ID!
+  externalId: String!
+  customer: String!
+
+  """Valor com 2 casas, como string (ex.: "150.00")"""
+  amount: Decimal!
+  status: OrderStatus!
+
+  """Envios já feitos ao sistema interno"""
+  attempts: Int!
+
+  """Próxima tentativa (aguardando retentativa)"""
+  nextAttemptAt: DateTime
+  lastError: String
+
+  """Protocolo do sistema interno"""
+  internalReference: String
+
+  """Quando o pedido foi recebido"""
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  finishedAt: DateTime
+
+  """Cada envio ao sistema interno, em ordem"""
+  history: [OrderAttempt!]!
+}
+
+"""Um envio do pedido ao sistema interno"""
+type OrderAttempt {
+  number: Int!
+  startedAt: DateTime!
+  finishedAt: DateTime!
+  durationMs: Int!
+  outcome: AttemptOutcome!
+  message: String
+}
+
+type OrderPage {
+  items: [Order!]!
+  total: Int!
+  page: Int!
+  size: Int!
+}
+
+"""Quantidade de pedidos em cada status"""
+type OrderStats {
+  received: Int!
+  processing: Int!
+  processed: Int!
+  failed: Int!
+  total: Int!
+}
+
+"""Estado do pedido"""
+enum OrderStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+type Query {
+  """Pedidos do mais recente para o mais antigo. Exige login."""
+  orders(status: OrderStatus = null, search: String = null, page: Int! = 1, size: Int! = 20): OrderPage!
+
+  """Pedido pelo id. Exige login."""
+  order(id: ID!): Order
+
+  """Pedido pelo externalId. Exige login."""
+  orderByExternalId(externalId: String!): Order
+
+  """Totais por status. Exige login."""
+  orderStats: OrderStats!
+
+  """Se o simulador de pedidos está ligado neste ambiente. Exige login."""
+  orderSimulatorEnabled: Boolean!
+}
+
+"""Mesmo payload do webhook REST"""
+input ReceiveOrderInput {
+  """Chave de idempotência do pedido"""
+  externalId: String!
+  customer: String!
+
+  """Maior que zero, até 2 casas decimais"""
+  amount: Decimal!
+}
+
+type ReceiveOrderPayload {
+  order: Order!
+
+  """false quando o externalId já existia (reenvio): nada novo foi criado"""
+  created: Boolean!
+}
+
+input SimulateOrdersInput {
+  scenario: SimulationScenario!
+
+  """Quantidade de pedidos (1 a 20)"""
+  count: Int! = 1
+}
+
+"""
+Cenário do simulador: define como o sistema interno (mock) vai responder
+"""
+enum SimulationScenario {
+  SUCCESS
+  REJECTED
+  UNSTABLE
+  TIMEOUT
+  RANDOM
+}
+
+type Subscription {
+  """
+  Envia o pedido atualizado a cada mudança de status (recebido, em processamento, retentativa, processado, falhou). Sem `id`, acompanha todos. Exige login; termina com SESSION_EXPIRED quando a sessão acaba.
+  """
+  orderUpdated(id: ID = null): Order!
+}

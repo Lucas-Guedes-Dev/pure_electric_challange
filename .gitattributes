@@ -1,0 +1,2 @@
+# Garante LF em scripts shell (evita "no such file or directory" no container quando clonado no Windows)
+*.sh text eol=lf
