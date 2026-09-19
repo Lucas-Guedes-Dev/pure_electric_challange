@@ -86,7 +86,6 @@ Todos os 12 requisitos são cumpridos. Os testes automatizados passam: 128 no ba
 | Tratamento básico de falhas | ✅ | Nova tentativa com espera crescente (5 s e depois 10 s) para falhas temporárias; `FAILED` direto quando o sistema interno recusa; se o worker cair, outro retoma o pedido quando a reserva vence; histórico de cada tentativa; reprocessamento manual de pedidos `FAILED` (`POST /api/orders/{id}/reprocess`, mutation `reprocessOrder` e botão no detalhe do pedido) | `orders/processor.py` + `orders/internal_client.py` + `OrderService.reprocess` |
 | Consulta dos pedidos e respectivos status | ✅ | REST (`GET /api/orders`, `/api/orders/{id}`, `/api/orders/stats`), GraphQL (queries e subscription em tempo real) e a interface em http://localhost:5173/pedidos | `orders/controller.py`, `orders/graphql.py`, `frontend/src/pages/OrdersPage.tsx` |
 | Testes das principais regras de negócio | ✅ | Validação, idempotência (inclusive concorrente), estados, retentativas, falhas, retomada após queda do worker, reprocessamento, integração com o mock, GraphQL e simulador | `backend/tests/test_orders_*.py`, `test_order_reprocess.py`, `test_graphql_*.py`, `test_order_simulator.py`; `frontend/src/**/*.test.ts(x)` |
-| README com instruções, decisões técnicas e respostas | ✅ | Este arquivo: como rodar, esta tabela e as respostas às perguntas do desafio (idempotência, indisponibilidade, evolução, decisões técnicas, trade-offs e pendências) | [Perguntas do desafio](#perguntas-do-desafio) |
 
 ## Perguntas do desafio
 
