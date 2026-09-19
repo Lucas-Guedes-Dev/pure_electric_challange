@@ -67,7 +67,7 @@ docker compose down        # para tudo
 docker compose down -v     # para tudo e apaga os dados do banco
 ```
 
-Documentação técnica detalhada: [backend/README.md](backend/README.md) e [frontend/README.md](frontend/README.md).
+Documentação técnica detalhada: [backend/README.md](backend/README.md) e [frontend/README.md](frontend/README.md). Deploy em produção (Railway + Vercel + Elastic Cloud): [DEPLOY.md](DEPLOY.md).
 
 ## Requisitos obrigatórios
 

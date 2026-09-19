@@ -274,10 +274,12 @@ O frontend sempre chama caminhos relativos `/api/...`:
 
 - **Em desenvolvimento**, o Vite faz proxy de `/api` para `VITE_PROXY_TARGET`. Por isso não há problema de CORS.
 - **Em produção** (imagem `prod`), o nginx faz o mesmo proxy para `http://backend:8000`.
+- **No Vercel**, o [`vercel.json`](vercel.json) repassa `/api/*` para a API no Railway (rewrite) e manda as demais rotas para o `index.html`. O WebSocket vai direto ao Railway (`VITE_GRAPHQL_WS_URL`), autenticado por um ticket de curta duração (`POST /api/auth/ws-ticket`), porque o Vercel não repassa WebSocket. Passo a passo em [DEPLOY.md](../DEPLOY.md).
 
 | Variável            | Padrão                   | Descrição |
 |---------------------|--------------------------|-----------|
 | `VITE_API_URL`      | `/api`                   | URL base usada pelo `httpClient` |
+| `VITE_GRAPHQL_WS_URL` | derivada de `VITE_API_URL` | WebSocket das subscriptions. No Vercel: `wss://<api no railway>/api/graphql` |
 | `VITE_PROXY_TARGET` | `http://localhost:8000`  | para onde o Vite encaminha `/api` (no Docker: `http://backend:8000`) |
 | `VITE_USE_POLLING`  | —                        | `true` para ativar o polling de arquivos (hot reload no Docker/Windows) |
 | `VITE_AUTH_ENABLED` | `true`                   | `false` libera as rotas sem login (só para desenvolver telas sem backend) |

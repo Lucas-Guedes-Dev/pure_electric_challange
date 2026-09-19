@@ -308,6 +308,7 @@ Para esconder a documentação (ex.: em produção), use `DOCS_ENABLED=false`.
 | GET    | `/api/auth/me`      | —                 | `AuthSessionResponseDTO`    | sim |
 | POST   | `/api/auth/refresh` | —                 | `AuthSessionResponseDTO`    | sim |
 | GET    | `/api/auth/events`  | —                 | stream SSE                  | cookie |
+| POST   | `/api/auth/ws-ticket` | —               | `WsTicketResponseDTO` (ticket de 60 s para o WebSocket) | sim |
 | POST   | `/api/orders`       | `OrderCreateDTO`  | `OrderResponseDTO` (202 novo / 200 reenvio) | header `X-Webhook-Key` |
 | GET    | `/api/orders`       | `?status=&search=&page=&size=` | `PageDTO[OrderResponseDTO]` | sim |
 | GET    | `/api/orders/stats` | —                 | `OrderStatsDTO`             | sim |
@@ -508,6 +509,7 @@ Testado de ponta a ponta com um pedido `FLAKY-…` passando pelo proxy do Vite. 
 **Segurança do WebSocket:**
 - a conexão só é aceita com sessão de login válida (código `4403` caso contrário);
 - a origem precisa ser a própria API ou estar em `CORS_ORIGINS`, porque WebSocket não passa pelo CORS;
+- a sessão vem do **ticket** enviado no `connection_init` (`{"ticket": "..."}`, obtido em `POST /api/auth/ws-ticket`) ou, sem ticket, do cookie. O ticket existe para o deploy com o frontend no Vercel e a API no Railway, em que o WebSocket vai direto à API e o cookie fica no domínio do frontend (ver [DEPLOY.md](../DEPLOY.md));
 - ficar conectado **não** renova a sessão, igual ao stream SSE do login;
 - quando a sessão acaba, a subscription termina com `SESSION_EXPIRED`.
 
@@ -618,6 +620,9 @@ As variáveis são lidas por `app/core/config.py`. Fora do Docker, copie `.env.e
 | `POSTGRES_DB`       | `pure_eletric`          |
 | `POSTGRES_HOST`     | `localhost` (no Docker: `db`) |
 | `POSTGRES_PORT`     | `5432`                  |
+| `DATABASE_URL`      | vazio. Se definida (ex.: `${{Postgres.DATABASE_URL}}` no Railway), substitui as `POSTGRES_*` |
+| `RUN_MIGRATIONS`    | `true`: o `entrypoint.sh` aplica as migrations antes de subir. Use `false` no worker e no internal-system |
+| `PORT`              | `8000`: porta do uvicorn na imagem (o Railway define a dele) |
 | `CORS_ORIGINS`      | `http://localhost:5173` (lista separada por vírgula) |
 | `DEBUG`             | `false` (quando `true`, loga o SQL) |
 | `DOCS_ENABLED`      | `true` (quando `false`, desliga Swagger, ReDoc e `/openapi.json`) |
@@ -628,6 +633,8 @@ As variáveis são lidas por `app/core/config.py`. Fora do Docker, copie `.env.e
 | `SESSION_COOKIE_NAME` | `pe_session` |
 | `SESSION_COOKIE_SECURE` | `false` (use `true` em produção com HTTPS) |
 | `SESSION_COOKIE_SAMESITE` | `lax` |
+| `SECRET_KEY`        | vazio = aleatório por processo. Assina os tickets do WebSocket; com mais de uma réplica da API, defina o mesmo valor em todas |
+| `WS_TICKET_TTL_SECONDS` | `60` (validade do ticket de conexão do WebSocket) |
 | `LOGIN_RATE_LIMIT`  | `5/minute` (por IP) |
 | `RATE_LIMIT_ENABLED` | `true` |
 | `PASSWORD_HASH_ROUNDS` | `12` (custo do bcrypt) |
@@ -635,6 +642,7 @@ As variáveis são lidas por `app/core/config.py`. Fora do Docker, copie `.env.e
 | `LOG_LEVEL`         | `INFO` |
 | `ENVIRONMENT`       | `development` (vira `service.environment` nos logs) |
 | `ELASTICSEARCH_URL` | vazio = só console (no compose: `http://elasticsearch:9200`) |
+| `ELASTICSEARCH_API_KEY` | vazio = sem autenticação (ES do compose). No Elastic Cloud: a chave **Encoded** (vai no header `Authorization: ApiKey …`) |
 | `ELASTICSEARCH_LOGS_DATA_STREAM` | `logs-pure_eletric.api-default` |
 | `ORDERS_WEBHOOK_KEY` | vazio = webhook aberto (só dev). No compose: `dev-webhook-key` |
 | `INTERNAL_SYSTEM_URL` | `http://localhost:9000` (no compose: `http://internal-system:9000`) |
