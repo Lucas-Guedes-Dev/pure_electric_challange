@@ -151,7 +151,6 @@ Detalhes em [backend/README.md › Decisões técnicas](backend/README.md#decis�
 |-----------|-----------------------|
 | CI | GitHub Actions rodando lint, testes, checagem do schema/codegen e build das imagens |
 | Segurança do webhook | Assinatura HMAC do corpo com timestamp, janela de validade e rotação de chaves |
-| Escala | Outbox + broker com DLQ quando o volume ou o número de consumidores crescer |
 | Métricas e alertas | OpenTelemetry/Prometheus: tamanho da fila, idade do pedido mais antigo em `RECEIVED`, taxa de falha e tempo de processamento |
 | Manutenção de dados | Rotina para apagar sessões expiradas e arquivar pedidos antigos |
 | Mock com estado durável | Guardar as chaves de idempotência do mock em Redis |
