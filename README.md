@@ -119,9 +119,8 @@ Os cenários `FLAKY-…` (instável), `TIMEOUT-…` (sem resposta) e `OUTAGE-…
 1. **Um envio por destino.** Hoje cada pedido tem um único envio. Com vários sistemas, a fila passaria a ser de envios: uma tabela `order_dispatches(order_id, target, status, attempts, next_attempt_at, lease_token…)`, com a mesma lógica atual de reserva, retentativas e histórico, mas separada por destino. O status do pedido passaria a ser derivado dos envios (ex.: `PROCESSED` quando todos os obrigatórios concluírem).
 2. **Um adaptador por sistema.** O worker já depende de uma interface (`InternalSystem.send()`), e não do HTTP diretamente. Cada integração ganharia o seu adaptador (`ErpClient`, `CarrierClient`, `PaymentGatewayClient`), que traduz o formato e classifica os erros como temporários ou definitivos, com timeout, número de tentativas e limite de chamadas próprios.
 3. **Ordem e compensação.** Quando há dependência (ex.: só chamar a transportadora depois de o pagamento ser aprovado), uma saga coordena as etapas e define compensações para quando algo falha no meio (ex.: estornar o pagamento se o ERP recusar).
-4. **Broker de mensagens.** Com vários consumidores e mais volume, eu trocaria a fila no Postgres por **outbox transacional + broker** (RabbitMQ, Kafka ou SQS). O pedido e o evento `order.received` continuam sendo gravados na mesma transação, e cada integração consome o evento na sua própria fila, com fila de mensagens mortas (DLQ) e possibilidade de reprocessar.
-5. **Isolamento.** Workers separados por destino e *circuit breaker* por integração: um ERP lento não pode atrasar os pagamentos.
-6. **Retornos desses sistemas** (pagamento aprovado, código de rastreio) chegariam por webhooks de entrada, com o mesmo padrão idempotente do recebimento de pedidos e assinatura HMAC de cada provedor.
+4. **Isolamento.** Workers separados por destino e *circuit breaker* por integração: um ERP lento não pode atrasar os pagamentos.
+5. **Retornos desses sistemas** (pagamento aprovado, código de rastreio) chegariam por webhooks de entrada, com o mesmo padrão idempotente do recebimento de pedidos e assinatura HMAC de cada provedor.
 
 ### Decisões técnicas: principais escolhas
 
