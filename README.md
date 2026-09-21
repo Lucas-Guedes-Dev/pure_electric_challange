@@ -143,25 +143,18 @@ Detalhes em [backend/README.md › Decisões técnicas](backend/README.md#decis�
 - **Fila no Postgres, e não num broker.** Resolve bem o volume do desafio, mas o worker consulta a fila a cada 1 s (não é por push) e ela não tem DLQ.
 - **Worker processa o lote um pedido por vez.** A escala é horizontal (mais workers). Num mesmo worker, um pedido que dá timeout atrasa os outros do lote.
 - **Política de retentativa única para todos:** 3 tentativas, espera fixa e sem variação aleatória (*jitter*), e sem *circuit breaker*.
-- **Webhook autenticado por chave compartilhada**, sem assinatura HMAC nem proteção contra reenvio malicioso (*replay*) por timestamp.
-- **Mock do sistema interno com estado em memória:** as chaves de idempotência dele se perdem quando o container reinicia.
-- **Testes automatizados em SQLite.** O `SKIP LOCKED` e o `LISTEN/NOTIFY`, que dependem do Postgres, foram verificados manualmente na stack real, e não por teste automático.
 - **Usuários criados pelo terminal** (`python -m app.cli create-user`), sem tela de cadastro, e perfis simples (ADMIN/USER).
-- **Padrões de desenvolvimento no compose:** chave do webhook fixa, simulador ligado e Elasticsearch/Kibana sem autenticação.
 
 ### Pendências: o que ficou de fora e como seria feito
 
 | Pendência | Como eu implementaria |
 |-----------|-----------------------|
-| Testes contra Postgres real e E2E | pytest com Postgres em container (testcontainers) para concorrência da fila e `LISTEN/NOTIFY`; Playwright para os fluxos da interface |
 | CI | GitHub Actions rodando lint, testes, checagem do schema/codegen e build das imagens |
-| Resiliência | *Circuit breaker* por integração, *jitter* na espera e envios concorrentes dentro do worker (cliente HTTP assíncrono) |
 | Segurança do webhook | Assinatura HMAC do corpo com timestamp, janela de validade e rotação de chaves |
 | Escala | Outbox + broker com DLQ quando o volume ou o número de consumidores crescer |
 | Métricas e alertas | OpenTelemetry/Prometheus: tamanho da fila, idade do pedido mais antigo em `RECEIVED`, taxa de falha e tempo de processamento |
 | Manutenção de dados | Rotina para apagar sessões expiradas e arquivar pedidos antigos |
 | Mock com estado durável | Guardar as chaves de idempotência do mock em Redis |
-| Produção | Segredos fora do compose, HTTPS com `SESSION_COOKIE_SECURE=true`, simulador desligado e Elasticsearch com autenticação |
 
 ## Uso de IA no desenvolvimento
 
